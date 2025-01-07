@@ -1,8 +1,21 @@
 CPUFriend Changelog
 ===================
+#### v1.2.9
+- Fixed loading on macOS 10.10 and older due to a MacKernelSDK regression
+
+#### v1.2.8
+- Added constants for macOS 15 support
+
+#### v1.2.7
+- Added constants for macOS 14 support
+
+#### v1.2.6
+- Added constants for macOS 13 support
+
 #### v1.2.5
 - Added support from macOS 10.6
-- Imporved FrequencyVectors analyzer by @usr-sse2
+- Improved FrequencyVectors analyzer by @usr-sse2
+- Changed project ownership to Acidanthera
 
 #### v1.2.4
 - Added constants for macOS 12 support

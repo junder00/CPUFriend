@@ -1,175 +1,195 @@
 #!/bin/bash
 
-#set -x
+kextFile="CPUFriendDataProvider.kext"
+ssdtFile="ssdt_data.dsl"
 
-kextName="CPUFriendDataProvider.kext"
-ssdtName="ssdt_data.dsl"
+function abort() {
+  echo "ERROR: $1!"
+  exit 1
+}
 
 function showHelp() {
-	echo -e "Usage:\n"
-	echo "-a, --acpi file Create ${ssdtName} with information provided by file."
-	echo "-k, --kext file Create ${kextName} with information provided by file."
-	echo
+  echo "Usage:"
+  echo
+  echo "-h, --help        Show this help message."
+  echo "-a, --acpi <file> Create ${ssdtFile} with CPU power management data provided by file."
+  echo
+  echo "-k, --kext <file> (version) Create ${kextFile} with CPU power management data provided by file."
+  echo "For cross-version compatibility, version can be specified when creating the kext bundle to be used together with OC MinKernel/MaxKernel."
+  echo "e.g. $0 --kext path/to/PM/plist 110 - This creates CPUFriendDataProvider_110.kext."
 }
 
 function genSSDT() {
-	local src="$1"
-	local data2Hex=$(xxd -pr -u "$src" | tr -d '\n' | sed 's/.\{2\}/\0x&, /g')
+  local src="$1"
+  local data2Hex=$(xxd -pr -u "${src}" | tr -d '\n' | sed 's/.\{2\}/\0x&, /g')
 
-	local ifs=$IFS
-	IFS=$'\n'
-	local cpuNames=(`ioreg -p IODeviceTree -c IOACPIPlatformDevice -k cpu-type -k clock-frequency | egrep name | sed -e 's/ *[-|="<a-z>]//g'`)
-	local cpuName="${cpuNames[0]}"
-	# restore IFS
-	IFS=$ifs
+  local ifs=$IFS
+  IFS=$'\n'
+  local cpuNames=(`ioreg -p IODeviceTree -c IOACPIPlatformDevice -k cpu-type -k clock-frequency | egrep name | sed -e 's/ *[-|="<a-z>]//g'`)
+  local cpuName="${cpuNames[0]}"
+  # restore IFS
+  IFS=$ifs
 
-	cat << EOF > "${ssdtName}"
-DefinitionBlock ("", "SSDT", 1, "ACDT", "freqdata", 0x00000001)
+  cat << EOF > "${ssdtFile}"
+DefinitionBlock ("", "SSDT", 2, "ACDT", "FreqData", 0x00000000)
 {
-		//
-		// The CPU device name. (${cpuName} here)
-		//
-		External (_PR_.${cpuName}, DeviceObj)
+  //
+  // CPU device name, detected from ioreg.
+  //
+  External (_PR_.${cpuName}, DeviceObj)
 
-		Scope (\_PR.${cpuName})
-		{
-				Method (_DSM, 4, NotSerialized)
-				{
-						If (LEqual (Arg2, Zero))
-						{
-								Return (Buffer (One)
-								{
-										 0x03                                           
-								})
-						}
+  Scope (\_PR.${cpuName})
+  {
+    Method (_DSM, 4, NotSerialized)
+    {
+      If (LEqual (Arg2, Zero))
+      {
+        Return (Buffer (One)
+        {
+             0x03                                           
+        })
+      }
 
-						Return (Package (0x04)
-						{
-								//
-								// Inject plugin-type = 0x01 to load X86*.kext
-								//
-								"plugin-type", 
-								One, 
-								
-								//
-								// Power management data file to replace.
-								//
-								"cf-frequency-data", 
-								Buffer ()
-								{
-										${data2Hex}
-								}
-						})
-				}
-		}
+      Return (Package (0x04)
+      {
+        //
+        // Inject plugin-type = 1 to load X86*.kext
+        //
+        "plugin-type", 
+        One, 
+        
+        //
+        // Power management data file to be injected by CPUFriend.
+        //
+        "cf-frequency-data", 
+        Buffer ()
+        {
+          ${data2Hex}
+        }
+      })
+    }
+  }
 }
 EOF
 }
 
 function genKext() {
-	local src="$1"
-	local data2B64=$(cat "$src" | base64)
+  local src="$1"
+  local dataBase64=$(cat "$src" | base64)
 
-	mkdir -p "${kextName}/Contents" && pushd "${kextName}/Contents" &> /dev/null
+  mkdir -p "${kextFile}/Contents" && pushd "${kextFile}/Contents" &> /dev/null
 
-	cat << EOF > Info.plist
+  cat << EOF > Info.plist
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleIdentifier</key>
-	<string>org.vanilla.driver.CPUFriendDataProvider</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
-	<key>CFBundleName</key>
-	<string>CPUFriendDataProvider</string>
-	<key>CFBundlePackageType</key>
-	<string>KEXT</string>
-	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
-	<key>CFBundleVersion</key>
-	<string>1.0.0</string>
-	<key>IOKitPersonalities</key>
-	<dict>
-		<key>CPUFriendDataProvider</key>
-		<dict>
-			<key>CFBundleIdentifier</key>
-			<string>com.apple.driver.AppleACPIPlatform</string>
-			<key>IOClass</key>
-			<string>AppleACPICPU</string>
-			<key>IONameMatch</key>
-			<string>processor</string>
-			<key>IOProbeScore</key>
-			<integer>1100</integer>
-			<key>IOProviderClass</key>
-			<string>IOACPIPlatformDevice</string>
-			<key>cf-frequency-data</key>
-			<data>${data2B64}</data>
-		</dict>
-	</dict>
-	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2017 - 2019 PMheart. All rights reserved.</string>
-	<key>OSBundleRequired</key>
-	<string>Root</string>
+  <key>CFBundleIdentifier</key>
+  <string>org.acidanthera.driver.CPUFriendDataProvider</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>CPUFriendDataProvider</string>
+  <key>CFBundlePackageType</key>
+  <string>KEXT</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0.1</string>
+  <key>CFBundleVersion</key>
+  <string>1.0.1</string>
+  <key>IOKitPersonalities</key>
+  <dict>
+    <key>CPUFriendDataProvider</key>
+    <dict>
+      <key>CFBundleIdentifier</key>
+      <string>com.apple.driver.AppleACPIPlatform</string>
+      <key>IOClass</key>
+      <string>AppleACPICPU</string>
+      <key>IONameMatch</key>
+      <string>processor</string>
+      <key>IOProbeScore</key>
+      <integer>1100</integer>
+      <key>IOProviderClass</key>
+      <string>IOACPIPlatformDevice</string>
+      <key>cf-frequency-data</key>
+      <data>${dataBase64}</data>
+    </dict>
+  </dict>
+  <key>NSHumanReadableCopyright</key>
+  <string>Copyright © 2017-2022 PMheart. All rights reserved.</string>
+  <key>OSBundleRequired</key>
+  <string>Root</string>
 </dict>
 </plist>
 EOF
-	
-	popd &> /dev/null
+  
+  popd &> /dev/null
 }
 
 function main() {
-	case "$1" in
-		-a|--acpi )
-			# now $1 is the plist
-			shift
-			# exit when plist does not exist
-			[[ ! -f "$1" ]] && echo "$1 does not exist!" && exit 1
+  case "$1" in
+    -h|--help)
+      showHelp
+      exit 0
+    ;;
 
-			if [[ -f "${ssdtName}" ]]; then
-				read -p "${ssdtName} already exists, override? (y/N) " ask4NewSSDT
-				case "${ask4NewSSDT}" in
-					y|Y ) ;;
-					
-					* ) exit ;;
-				esac
+    -a|--acpi )
+      # now $1 is the resource plist
+      shift
+      if [ ! -f "$1" ]; then
+        abort "$1 does not exist!"
+      fi
 
-				rm -f "${ssdtName}"
-			fi
+      if [ -f "${ssdtFile}" ]; then
+        read -p "${ssdtFile} already exists, override? (y/N) " ask4NewSSDT
+        case "${ask4NewSSDT}" in
+          y|Y )
+          ;;
+          
+          * )
+            exit 0
+          ;;
+        esac
 
-			genSSDT "$1"
-		;;
+        rm -f "${ssdtFile}"
+      fi
 
-		-k|--kext )
-			# now $1 is the plist
-			shift
-			# exit when plist does not exist
-			[[ ! -f "$1" ]] && echo "$1 does not exist!" && exit 1
+      genSSDT "$1"
+    ;;
 
-			if [[ -d "${kextName}" ]]; then
-				read -p "${kextName} already exists, override? (y/N) " ask4NewKext
-				case "${ask4NewKext}" in
-					y|Y ) ;;
-					
-					* ) exit ;;
-				esac
+    -k|--kext )
+      # now $1 is the resource plist
+      shift
+      if [ ! -f "$1" ]; then
+        abort "$1 does not exist!"
+      fi
 
-				rm -rf "${kextName}"
-			fi
+      # $2 is the optional version info
+      if [ "$2" != "" ]; then
+        kextFile="CPUFriendDataProvider_$2.kext"
+      fi
 
-			genKext "$1"
-		;;
+      if [ -d "${kextFile}" ]; then
+        read -p "${kextFile} already exists, override? (y/N) " ask4NewKext
+        case "${ask4NewKext}" in
+          y|Y )
+          ;;
+          
+          * )
+            exit 0
+          ;;
+        esac
 
-		* )
-			if [[ -z "$1" ]]; then
-				echo -e "Invaild option: (null)\n"
-			else
-				echo -e "Invaild option: $1\n"
-			fi
-			showHelp
-			exit 1
-		;;
-	esac
+        rm -rf "${kextFile}"
+      fi
+
+      genKext "$1"
+    ;;
+
+    * )
+      showHelp
+      exit 1
+    ;;
+  esac
 }
 
 main "$@"
